@@ -1,0 +1,457 @@
+---
+title: "Customer Segmentation for UK retailer"
+authors: "Sanjana Chalavadi"
+date: '2022-12-07'
+---
+
+
+```{r, loading_required_libraries}
+#loading all the required libraries
+knitr::opts_chunk$set(echo = TRUE)
+library(tibble)
+library(dplyr)
+library(magrittr)
+library(ggplot2)
+library(plotly)
+library(data.table)
+library(tidyr)
+library(cowplot)
+library(cluster)
+library(GGally)
+library(tidyverse)
+library(readxl)
+library(DataExplorer)
+library(visdat)
+library(naniar)
+library(rmarkdown)
+library(knitr) 
+library(DT)
+library(wordcloud2) 
+library(wordcloud) 
+library(extrafont) 
+library(SnowballC) 
+library(tm) 
+library(dlookr) 
+library(gridExtra)
+library(scales)
+library(lubridate) 
+library(ggThemeAssist)
+library(hrbrthemes)
+library(xts)
+library(highcharter)
+library(countrycode)
+library(factoextra)
+library(dplyr)
+library(funModeling)
+```
+
+
+```{r,loading_data}
+#reading in the dataframe and checking the answers
+df <- read.csv("Online_Retail_v2.csv", header=TRUE)
+head(df)
+```
+
+```{r,structure_of_data}
+str(df)
+summary(df)
+head(df, 5)
+n_distinct(df$CustomerID)
+n_distinct(df$Description)
+```
+
+```{r, missing_values_check}
+gg_miss_var(df, show_pct = TRUE)
+```
+```{r, removing_missing_values}
+#Removing missing values in customer_id
+df <- df %>% na.omit(df$CustomerID)
+
+# Replacing NA Description values with the string "empty"
+df$Description <- replace_na(df$Description, "No-info")
+```
+
+
+```{r, outlier_treatment}
+plot_outlier(df, Quantity, UnitPrice, col = "#ACAC89")
+min(df$UnitPrice)
+max(df$UnitPrice)
+```
+
+```{r,feature_extraction_spent}
+#Feature extraction
+#Step 1: spent column -> total quantity * unit price
+df_fe <- df
+df_fe <- mutate(df_fe,Spent=Quantity*UnitPrice)
+head(df_fe)
+
+```
+
+```{r,feature_extraction_date_time}
+#step 2: we are extracting derived columns like weekday, hr, month,year from the date column
+#converting the character invoice date to date format
+df_fe$InvoiceDate <- dmy_hm(df_fe$InvoiceDate)
+
+#date extraction
+df_fe$year <- year(df_fe$InvoiceDate)
+df_fe$month <- month(df_fe$InvoiceDate)
+df_fe$hour <- hour(df_fe$InvoiceDate)
+df_fe$wday <- wday(df_fe$InvoiceDate,label = TRUE)
+```
+
+
+```{r,eda1}
+#Bar plot - Country wise revenue earned
+p1 <- df_fe %>% group_by(Country) %>% dplyr::summarise(total_revenue = sum(Spent))
+a1 <- ggplot(data = p1, mapping = aes(x = reorder(Country, -total_revenue), total_revenue)) + 
+  geom_bar(stat = "identity",fill="dodgerblue2") + coord_flip()+  labs( x = 'Revenue earned',y = "Country", title = "Total Revenue by Country") +theme(axis.text.x = element_text(angle=90))
+
+p2 <- df_fe %>% group_by(Country) %>% filter(Country != "United Kingdom") %>% dplyr::summarise(total_revenue = sum(Spent))
+a2 <- ggplot(data = p2, mapping = aes(x = reorder(Country, -total_revenue), total_revenue)) + 
+  geom_bar(stat = "identity",fill="dodgerblue2") +  coord_flip()+ labs( x = 'Revenue',y = "Country", title = "(Excluding UK)")+theme(axis.text.x = element_text(angle=90))
+
+plot_grid( a1,a2, ncol = 2) + labs (title = "Total Revenue by Country") +theme(plot.title = element_text(hjust = 0.5,face = "bold"))
+```
+
+```{r,eda2}
+#Barplot - Revenue count by Weekday
+p3 <- df_fe %>% group_by(wday) %>% dplyr::summarise(total_revenue = sum(Spent))
+a3 <- ggplot(data = p3, mapping = aes(x = reorder(wday, -total_revenue), total_revenue)) + 
+  geom_bar(stat = "identity",fill="coral4") +   labs( y = 'Revenue',x = "Weekday", title = "Total Revenue by Weekday") +theme(axis.text.x = element_text(angle=90))
+
+p4 <- df_fe %>% group_by(hour) %>% dplyr::summarise(total_revenue = sum(Spent))
+a4 <- ggplot(data = p4, mapping = aes(x = reorder(hour, -total_revenue), total_revenue)) + 
+  geom_bar(stat = "identity",fill="orchid4") +  labs( y = 'Revenue',x = "Hour", title = "Total Revenue by Hour") +theme(axis.text.x = element_text(angle=90))
+
+p5 <- df_fe %>% group_by(month) %>% dplyr::summarise(total_revenue = sum(Spent))
+a5 <- ggplot(data = p5, mapping = aes(x = reorder(month, -total_revenue), total_revenue)) + 
+  geom_bar(stat = "identity",fill="seagreen4") +   labs( y = 'Revenue',x = "Month", title = "Total Revenue by Month") +theme(axis.text.x = element_text(angle=90))
+
+p6 <- df_fe %>% group_by(year) %>% dplyr::summarise(total_revenue = sum(Spent))
+a6 <- ggplot(data = p6, mapping = aes(x = reorder(year, -total_revenue), total_revenue)) + 
+  geom_bar(stat = "identity",fill="orangered2") +   labs( y = 'Revenue',x = "Year", title = "Total Revenue by Year") +theme(axis.text.x = element_text(angle=90))
+
+
+plot_grid( a3,a4,a5,a6, ncol = 2,nrow=2) + labs (title = "Total Revenue by Time") +theme(plot.title = element_text(hjust = 0.5,face = "bold"))
+```
+
+```{r,customers}
+p7 <- df_fe %>% group_by(CustomerID) %>% dplyr::summarise(amount_spent = sum(Spent)) %>% arrange(-amount_spent)
+ggplot(data = head(p7,10), mapping = aes(x = reorder(as.factor(CustomerID), -amount_spent), amount_spent)) + 
+  geom_bar(stat = "identity",fill="turquoise4")+  labs( y = 'Revenue',x = "Customer ID", title = "Top 10 Customers") +theme(axis.text.x = element_text(angle=90))
+
+
+p8 <- df_fe %>% group_by(Description) %>% dplyr::summarise(amount_spent = sum(Spent)) %>% arrange(-amount_spent)
+ggplot(data = head(p8,10), mapping = aes(x = reorder((Description), -amount_spent), amount_spent)) + 
+  geom_bar(stat = "identity",fill="orange1")+  labs( y = 'Revenue',x = "Products", title = "Top 10 Products") +theme(axis.text.x = element_text(angle=90)) + coord_flip()
+
+```
+
+```{r,cancel_order_analysis}
+#cancelled orders by country, weekday, hour, products
+cancel_df <- df_fe %>% filter(Quantity < 0)
+
+p9 <- cancel_df %>% group_by(CustomerID) %>% dplyr::summarise(amount_spent = sum(Spent)) %>% arrange(amount_spent)
+ggplot(data = head(p9,10), mapping = aes(x = reorder(as.factor(CustomerID), -amount_spent), amount_spent)) + 
+  geom_bar(stat = "identity",fill="violetred4")+  labs( y = 'Revenue',x = "Customer ID", title = "Top 10 Customer's cancelling Orders") +theme(axis.text.x = element_text(angle=90))
+
+
+p10 <- cancel_df %>% group_by(Description) %>% dplyr::summarise(amount_spent = sum(Spent)) %>% arrange(amount_spent)
+ggplot(data = head(p10,10), mapping = aes(x = reorder((Description), -amount_spent), amount_spent)) + 
+  geom_bar(stat = "identity",fill="orange4")+  labs( y = 'Revenue',x = "Products", title = "Top 10 Products being cancelled") +theme(axis.text.x = element_text(angle=90)) + coord_flip()
+```
+
+```{r,word_cloud_EDA}
+# preparing and cleaning the text
+products_list <- unique(df_fe$Description)
+docs <- Corpus(VectorSource(products_list))
+toSpace <- content_transformer(function (x , pattern) gsub(pattern, " ", x))
+docs <- tm_map(docs, toSpace, "/")
+docs <- tm_map(docs, toSpace, "@")
+docs <- tm_map(docs, toSpace, "\\|")
+# Convert the text to lower case
+docs <- tm_map(docs, content_transformer(tolower))
+# Remove numbers
+docs <- tm_map(docs, removeNumbers)
+# Remove english common stopwords
+docs <- tm_map(docs, removeWords, stopwords("english"))
+# Removing own stop words
+docs <- tm_map(docs, removeWords, c("pink", "blue","red","set","white","metal", "glass","large","small","holder","black","design"))
+# Remove punctuations
+docs <- tm_map(docs, removePunctuation)
+# Eliminate extra white spaces
+docs <- tm_map(docs, stripWhitespace)
+
+dtm <- TermDocumentMatrix(docs)
+m <- as.matrix(dtm)
+v <- sort(rowSums(m),decreasing=TRUE)
+d <- data.frame(word = names(v),freq=v)
+
+set.seed(123)
+wordcloud(words = d$word, freq = d$freq, min.freq = 1,
+          max.words=20, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+
+```
+
+```{r,revenue_map}
+map_info <- df_fe %>% group_by(Country) %>%  dplyr::summarise(revenue = sum(Spent))
+highchart(type = "map") %>%
+  hc_add_series_map(worldgeojson,
+                    map_info %>% 
+                      bind_cols(as_tibble(map_info$revenue)) %>% 
+                      group_by(map_info$Country) %>% 
+                      dplyr::summarise(revenue = log1p(sum(value))) %>% 
+                      ungroup() %>% 
+                      mutate(iso2 = countrycode(sourcevar = map_info$Country, 
+                          origin="country.name", destination="iso2c")),
+                    value = "revenue", joinBy = "iso2") %>%
+  hc_title(text = "Revenue by country (log)") %>%
+  hc_tooltip(useHTML = TRUE, headerFormat = "",
+             pointFormat = "{point.map_info$Country}") %>% 
+  hc_colorAxis(stops = color_stops(colors = viridisLite::turbo(10, begin = 0.1)))
+```
+
+
+# MODELING 
+
+```{r,RFM}
+## recency
+recency <- df_fe %>% dplyr::select(CustomerID, InvoiceDate) %>% mutate(recency = as.Date("2011-12-09") - as.Date(InvoiceDate))  
+recency <- recency %>% dplyr::select(CustomerID, recency) %>% group_by(CustomerID) %>% slice(which.min(recency))
+
+#frequency
+amount_products <- df_fe %>%dplyr::select(CustomerID, InvoiceDate) %>% group_by(CustomerID, InvoiceDate) %>% dplyr::summarise(n_prod = n())
+df_frequency <- amount_products %>% dplyr::select(CustomerID) %>%group_by(CustomerID) %>% dplyr::summarise(frequency = n())
+
+#monetary
+customer <- summarise_at(group_by(df_fe,CustomerID,Country), vars(Spent,Quantity), funs(sum(.,na.rm = TRUE)))
+monetary <- select(customer, c("CustomerID", "Spent"))
+
+#RFM DF
+# inner join the three RFM data frames by CustomerID
+rfm <- recency %>% dplyr::inner_join(., df_frequency, by = "CustomerID") %>% dplyr::inner_join(., monetary, by = "CustomerID")
+# drop the days from recency column and transform it into numeric data type
+rfm <- rfm %>% mutate(recency = str_replace(recency, " days", "")) %>% mutate(recency = as.numeric(recency)) %>% ungroup()
+head(rfm, 3)
+```
+
+
+```{r,rfm_plot}
+h1 <- hchart(rfm$recency, color = "#4286f4", name = "Recency")
+h2 <- hchart(rfm$frequency, color = "#d66048", name = "Frequency")
+h3 <- hchart(rfm$Spent, color = "#4A6670", name = "Monetary Value")
+htmltools::browsable(hw_grid(h1, h2, h3, ncol = 3, rowheight = 500))
+```
+
+
+```{r, K_means_clustering}
+rfm1 <- select(rfm, -CustomerID)
+df_scale <- scale(rfm1)
+
+#elbow method
+set.seed(123) 
+km_out_list <- lapply(1:20, function(k) list(k=k,km_out=kmeans(df_scale, k, nstart = 30)))
+km_results <- data.frame(
+  k=sapply(km_out_list, function(k) k$k),
+  totss=sapply(km_out_list, function(k) k$km_out$totss),
+  tot_withinss=sapply(km_out_list, function(k) k$km_out$tot.withinss)
+  )
+
+plot_ly(km_results,x=~k,y=~tot_withinss,mode = 'lines+markers')
+```
+
+Inference: 
+Typically, the elbow point or change in slope from steep to gentle is where we consider k to be at its best. Such points are observed here with k = 3, 5 and 7.Despite the fact that the graph suggests 3 over 5 & 7(based on slope change from steep to gentle), it may not be the ideal value because it overly generalizes the customers and prevents us from performing targeted marketing. Therefore, we can eliminate considering 3 as no. of clusters after taking domain knowledge into account.
+
+```{r,kmeans_silhoutte}
+#Silhouette
+set.seed(123)
+fviz_nbclust(df_scale,kmeans, method = "silhouette")+labs(subtitle = "Silhouette method") 
+km.res <- kmeans(df_scale, 10, nstart = 20)
+```
+
+```{r,kmeans_gap_statistic}
+library(cluster)
+# compute gap statistic
+set.seed(123)
+gap_stat <- suppressWarnings(clusGap(df_scale, FUN = kmeans, nstart = 25,K.max = 10, B = 50))
+fviz_gap_stat(gap_stat) + labs(subtitle = "Gap statistic method")
+```
+Inference: 
+- Elbow plot suggest 3,5 & 7.
+- Silhouette plot suggests 4. 
+- Gap-statistic is not converging. But in the selected range local maxima was attained at 5. 
+
+We eliminated 3 as our objective is targeted advertising. Considering 5 seems an appropriate through elbow and gap statistics.
+
+
+```{r,kmeans_cluster_char}
+set.seed(123)
+km.res_5 <- kmeans(df_scale, 5, nstart = 10)
+#Withiness score
+km.res_5$betweenss/km.res_5$totss
+
+rfm <- rfm %>% mutate(kmm_cluster = km.res_5$cluster)
+
+#cluster analysis
+fviz_cluster(km.res_5, geom = "point", data = df_scale) + ggtitle("Kmeans Clustering for Optimal K (k=5)")
+hist(rfm$kmm_cluster,xlab = "Cluster",col = "blue",main= "Kmeans Cluster distribution")
+
+#cluster characteristics
+a <- ggplot(rfm, aes(x = kmm_cluster, y = log(frequency), group = kmm_cluster, fill = as.factor(kmm_cluster))) + 
+  geom_boxplot(show.legend = FALSE) + theme_minimal() + scale_fill_brewer(palette = "Set2") 
+b <- ggplot(rfm, aes(x = kmm_cluster, y = log(Spent), group = kmm_cluster, fill = as.factor(kmm_cluster))) + 
+  geom_boxplot(show.legend = FALSE) + theme_minimal() + scale_fill_brewer(palette = "Set2")
+c <- ggplot(rfm, aes(x = kmm_cluster, y = recency, group = kmm_cluster, fill = as.factor(kmm_cluster))) + 
+  geom_boxplot(show.legend = FALSE) + theme_minimal() + scale_fill_brewer(palette = "Set2")
+plot_grid( a,b,c, ncol = 3) + labs (title = "RFM Cluster Characteristics for KMeans") +theme(plot.title = element_text(hjust = 0.5,face = "bold"))
+```
+
+```{r,DB_Scan}
+# Density Based cluster - To avoid the impact of outliers
+#install.packages("fpc")
+#install.packages("dbscan")
+library("fpc")
+library("factoextra")
+set.seed(123)
+db <- fpc::dbscan(df_scale, eps=0.15, MinPts = 5, scale = TRUE)
+fviz_cluster(db, df_scale, stand = FALSE, ellipse = FALSE, show.clust.cent = FALSE,geom = "point",palette = "jco",ggtheme=theme_classic())
+```
+```{r,cluster_characterstics}
+
+rfm <- rfm %>% mutate(db_cluster = db$cluster)
+
+hist(rfm$db_cluster,xlab = "Cluster",col = "blue",main= "DBScan Cluster distribution")
+
+#cluster characteristics
+d <- ggplot(rfm, aes(x = db_cluster, y = log(frequency), group = db_cluster, fill = as.factor(db_cluster))) + 
+  geom_boxplot(show.legend = FALSE) + theme_minimal() + scale_fill_brewer(palette = "Set2") 
+e <- ggplot(rfm, aes(x = db_cluster, y = log(Spent), group = db_cluster, fill = as.factor(db_cluster))) + 
+  geom_boxplot(show.legend = FALSE) + theme_minimal() + scale_fill_brewer(palette = "Set2")
+f <- ggplot(rfm, aes(x = db_cluster, y = recency, group = db_cluster, fill = as.factor(db_cluster))) + 
+  geom_boxplot(show.legend = FALSE) + theme_minimal() + scale_fill_brewer(palette = "Set2")
+plot_grid( d,e,f, ncol = 3) + labs (title = "RFM Cluster Characteristics for DB Scan") +theme(plot.title = element_text(hjust = 0.5,face = "bold"))
+
+```
+
+```{r}
+
+#Min distance clustering
+kNNdist <- sort(dbscan::kNNdistplot(scale(df_scale), k =  5))
+abline(h = 0.15, lty = 2)
+```
+
+```{r,gmm_clustering}
+library(ClusterR)
+set.seed(123)
+opt_gmm = Optimal_Clusters_GMM(df_scale, max_clusters = 9, criterion = "BIC", dist_mode = "maha_dist", seed_mode = "random_subset",
+                               km_iter = 10, em_iter = 10, var_floor = 1e-10,plot_data = T)
+
+gmm = GMM(df_scale, 5, dist_mode = "maha_dist", seed_mode = "random_subset", km_iter = 10,em_iter = 10, verbose = F)  
+pr = predict(gmm, newdata = df_scale)
+```
+
+```{r}
+pr
+```
+
+
+```{r}
+rfm <- rfm %>% mutate(gmm_cluster = pr)
+
+hist(rfm$gmm_cluster,xlab = "Cluster",col = "blue",main= "GMM Cluster distribution")
+
+#cluster characteristics
+g <- ggplot(rfm, aes(x = gmm_cluster, y = log(frequency), group = gmm_cluster, fill = as.factor(gmm_cluster))) + 
+  geom_boxplot(show.legend = FALSE) + theme_minimal() + scale_fill_brewer(palette = "Set2") 
+h <- ggplot(rfm, aes(x = gmm_cluster, y = log(Spent), group = gmm_cluster, fill = as.factor(gmm_cluster))) + 
+  geom_boxplot(show.legend = FALSE) + theme_minimal() + scale_fill_brewer(palette = "Set2")
+i <- ggplot(rfm, aes(x = gmm_cluster, y = recency, group = gmm_cluster, fill = as.factor(gmm_cluster))) + 
+  geom_boxplot(show.legend = FALSE) + theme_minimal() + scale_fill_brewer(palette = "Set2")
+plot_grid( g,h,i, ncol = 3) + labs (title = "RFM Cluster Characteristics for GMM Clustering") +theme(plot.title = element_text(hjust = 0.5,face = "bold"))
+
+```
+
+```{r,RFM_Analysis}
+recency_s <- df_fe %>% 
+  dplyr::select(CustomerID, InvoiceDate) %>% 
+  group_by(CustomerID) %>% 
+  slice(which.max(InvoiceDate))
+
+rfm_test <- customer %>% inner_join(recency_s, by = "CustomerID")
+
+rfm_test <- rfm_test %>% left_join(rfm%>%select(CustomerID,recency,frequency,Spent), by = "CustomerID") 
+
+library(rfm)
+rfm_result <- rfm_table_customer(rfm_test, CustomerID, Quantity, recency, Spent.x, as.Date("2011-12-09"))
+rfm_datatable <- rfm_result$rfm
+```
+
+
+```{r}
+rfm_segments <- rfm_datatable
+rfm_segments <- rfm_segments %>% 
+  mutate(segment = ifelse(recency_score >= 4 & frequency_score >= 4 & monetary_score >= 4, "Champion", 
+  ifelse(recency_score >= 2 & frequency_score >= 3 & monetary_score >= 3, "Loyal Customer", 
+  ifelse(recency_score >= 3 & frequency_score <= 3 & monetary_score <= 3, "Potential Loyalist",
+  ifelse(recency_score >= 4 & frequency_score <= 1 & monetary_score <= 1, "New Customer",
+  ifelse((recency_score == 3 | recency_score == 4) & frequency_score <= 1 & monetary_score <= 1, "Promising",
+  ifelse((recency_score == 2 | recency_score == 3) & (frequency_score == 2 | frequency_score == 3) & 
+           (monetary_score == 2 | monetary_score == 3), "Need Attention",
+  ifelse((recency_score == 2 | recency_score == 3) & frequency_score <= 2 & monetary_score <= 2, "About to Sleep",
+  ifelse(recency_score <= 2 & frequency_score > 2 & monetary_score > 2, "At Risk",
+  ifelse(recency_score <= 1 & frequency_score >= 4 & monetary_score >= 4, "Can't lose them",
+  ifelse(recency_score <= 2 & frequency_score == 2 & monetary_score == 2, "Hibernating", "Lost")))))))))))
+```
+
+```{r}
+ggplot(rfm_segments) + geom_bar(aes(x = segment, fill = segment))+theme(axis.text.x=element_text(angle=90,hjust=1)) +labs(title = "Barplot for Segments of customers")
+```
+```{r}
+rfm_segments %>% mutate(segment = factor(segment, labels = c("Lost", " Champion", "Loyal Customer", "Hibernating", "Potential Loyalist","Need Attention","At Risk","About to Sleep")))
+
+n <- ggplot(rfm_segments, aes(x = segment, y = recency_days))+ geom_boxplot()+theme(axis.text.x = element_text(angle=90))
+o <- ggplot(rfm_segments, aes(x = segment, y = log(transaction_count)))+ geom_boxplot()+theme(axis.text.x = element_text(angle=90))
+p <- ggplot(rfm_segments, aes(x = segment, y = log(amount)))+ geom_boxplot()+theme(axis.text.x = element_text(angle=90))
+
+plot_grid(n,o,p, ncol = 3) + labs (title = "RFM Analysis Cluster Characteristics") +theme(plot.title = element_text(hjust = 0.5,face = "bold"))
+```
+
+
+```{r}
+ggplotly(suppressWarnings(ggplot(rfm_segments, aes(x=as.factor(segment), y=recency_days, fill=as.factor(segment))))) + 
+labs(title="Income distribution for each cluster",x="cluster", y = "Income") + theme_classic()+ geom_boxplot( outlier.shape=NA)
+```
+
+
+```{r,Hierarcial_Clustering}
+
+fviz_nbclust(df_scale, hcut, method = "wss") +
+geom_vline(xintercept = 3, linetype = 2)+
+labs(subtitle = "Elbow method")
+```
+
+```{r}
+fviz_nbclust(df_scale, hcut, method = "silhouette")+
+labs(subtitle = "Silhouette method")
+```
+
+```{r}
+# Gap statistic
+# nboot = 50 to keep the function speedy.
+# recommended value: nboot= 500 for your analysis.
+# Use verbose = FALSE to hide computing progression.
+set.seed(123)
+fviz_nbclust(df_scale, hcut, nstart = 25, method = "gap_stat",
+nboot = 50)+
+labs(subtitle = "Gap statistic method")
+```
+
+```{r}
+nb.complete <- NbClust(df_scale, distance = "manhattan", min.nc = 2,max.nc = 10, method = "complete")
+# visualising the result
+suppressWarnings( fviz_nbclust(nb.complete))
+```
+
+
