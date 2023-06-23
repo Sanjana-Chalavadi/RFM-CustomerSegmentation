@@ -7,5 +7,5 @@ The aim of this project is to help a UK based online retailer, established in 19
 
 Conducted an end-to-end data science project to help a small business improve its online presence and marketing strategies, demonstrating the ability to apply data science to real-world business problems
 Used R to implement advanced data mining techniques, such as clustering and association rule mining, to identify patterns in customer behavior and preferences, providing insights into how the retailer can better serve its customers and tailor its marketing campaigns
-Developed visualizations using varius libraries to effectively communicate insights to the retailer
+Developed visualizations using various libraries to effectively communicate insights to the retailer.
 Added value to the retailer's business by providing actionable insights that can be used to improve their customer-centric marketing strategies and ultimately increase revenue
